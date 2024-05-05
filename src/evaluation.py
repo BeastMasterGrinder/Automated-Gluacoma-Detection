@@ -7,11 +7,19 @@ from tensorflow.keras.callbacks import ModelCheckpoint
 from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, UpSampling2D
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import concatenate
+from tensorflow.python.client import device_lib
+
+from tensorflow.keras.layers import Dropout, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.regularizers import l2
+
+
 
 # Define constants
 input_shape = (256, 256, 3)  # Input shape for the model
-epochs = 20
-batch_size = 16
+epochs = 5
+batch_size = 6
 
 # Data loading and preprocessing
 def load_data(data_dir):
@@ -49,15 +57,34 @@ def load_data(data_dir):
 def create_unet_model(input_shape):
     # Define encoder
     inputs = Input(input_shape)
-    conv1 = Conv2D(64, 3, activation='relu', padding='same')(inputs)
+
+    conv1 = Conv2D(64, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(inputs)
+    conv1 = BatchNormalization()(conv1)
+    conv1 = Dropout(0.2)(conv1)
+    
     pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
-    conv2 = Conv2D(128, 3, activation='relu', padding='same')(pool1)
+    
+    conv2 = Conv2D(128, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(pool1)
+    conv2 = BatchNormalization()(conv2)
+    conv2 = Dropout(0.2)(conv2)
+    
     pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
-    conv3 = Conv2D(256, 3, activation='relu', padding='same')(pool2)
+    
+    conv3 = Conv2D(256, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(pool2)
+    conv3 = BatchNormalization()(conv3)
+    conv3 = Dropout(0.2)(conv3)
+    
     pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
-    conv4 = Conv2D(512, 3, activation='relu', padding='same')(pool3)
+    
+    conv4 = Conv2D(512, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(pool3)
+    conv4 = BatchNormalization()(conv4)
+    conv4 = Dropout(0.2)(conv4)
+    
     pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
-    conv5 = Conv2D(1024, 3, activation='relu', padding='same')(pool4)
+    
+    conv5 = Conv2D(1024, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(pool4)
+    conv5 = BatchNormalization()(conv5)
+    conv5 = Dropout(0.2)(conv5)
     
     # Decoder
     upconv6 = Conv2D(512, 2, activation='relu', padding='same')(UpSampling2D(size=(2, 2))(conv5))
@@ -71,7 +98,10 @@ def create_unet_model(input_shape):
     conv8 = Conv2D(128, 3, activation='relu', padding='same')(merge8)
     upconv9 = Conv2D(64, 2, activation='relu', padding='same')(UpSampling2D(size=(2, 2))(conv8))
     merge9 = concatenate([conv1, upconv9], axis=3)
-    conv9 = Conv2D(64, 3, activation='relu', padding='same')(merge9)
+    
+    conv9 = Conv2D(64, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(merge9)
+    conv9 = BatchNormalization()(conv9)
+    conv9 = Dropout(0.2)(conv9)
     
     # Output layer
     outputs = Conv2D(1, 1, activation='sigmoid')(conv9)
@@ -79,16 +109,44 @@ def create_unet_model(input_shape):
     model = Model(inputs=inputs, outputs=outputs)
     return model
 
+
+def augment_data(X_train, y_train):
+    # Add a channels dimension to the data if it's missing
+    if X_train.ndim == 3:
+        X_train = np.expand_dims(X_train, axis=-1)
+    if y_train.ndim == 3:
+        y_train = np.expand_dims(y_train, axis=-1)
+
+    data_gen_args = dict(rotation_range=0.2,
+                         width_shift_range=0.05,
+                         height_shift_range=0.05,
+                         shear_range=0.05,
+                         zoom_range=0.05,
+                         horizontal_flip=True,
+                         fill_mode='nearest')
+    image_datagen = ImageDataGenerator(**data_gen_args)
+    mask_datagen = ImageDataGenerator(**data_gen_args)
+    image_datagen.fit(X_train, augment=True)
+    mask_datagen.fit(y_train, augment=True)
+    image_generator = image_datagen.flow(X_train, batch_size=batch_size, seed=1)
+    mask_generator = mask_datagen.flow(y_train, batch_size=batch_size, seed=1)
+    
+    train_generator = list(zip(image_generator, mask_generator))
+    return train_generator
+
+
 # Training process
 def train_model(model, train_data, val_data):
     # Compile the model
+    X_train, y_train = zip(*train_data)
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
     # Define callbacks
     checkpoint = ModelCheckpoint("optic_disc_segmentation_model.keras", monitor='val_loss', save_best_only=True, verbose=1)
+    early_stopping = EarlyStopping(monitor='val_accuracy', patience=3, restore_best_weights=True)
 
     # Train the model
-    history = model.fit(train_data[0], train_data[1], validation_data=val_data, epochs=epochs, batch_size=batch_size, callbacks=[checkpoint])
+    history = model.fit(np.array(X_train), np.array(y_train), validation_data=val_data, epochs=epochs, batch_size=batch_size, callbacks=[checkpoint, early_stopping])
 
     # Plot training history
     plt.plot(history.history['loss'], label='Training Loss')
@@ -125,6 +183,13 @@ def visualize_results(images, masks, predictions):
         plt.axis('off')
 
         plt.show()
+        
+
+def get_available_devices():
+    local_device_protos = device_lib.list_local_devices()
+    return [x.name for x in local_device_protos]
+
+
 
 # Main function
 def main():
@@ -134,9 +199,13 @@ def main():
     # Load data
     train_data, val_data, test_data = load_data(data_dir)
 
+    # Augment data
+    train_generator = augment_data(*train_data)
+
     # Create and train U-Net model
     model = create_unet_model(input_shape)
-    train_model(model, train_data, val_data)
+    print(get_available_devices())
+    train_model(model, train_generator, val_data)
 
     # Evaluate model
     loss, accuracy = evaluate_model(model, test_data)
@@ -146,6 +215,8 @@ def main():
     # Visualize results
     predictions = model.predict(test_data[0])
     visualize_results(test_data[0], test_data[1], predictions)
+    
+
 
 if __name__ == "__main__":
     main()
