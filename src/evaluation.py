@@ -1,25 +1,20 @@
 import os
 import numpy as np
 import cv2
-import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.callbacks import ModelCheckpoint
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, UpSampling2D
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import concatenate
-from tensorflow.python.client import device_lib
-
-from tensorflow.keras.layers import Dropout, BatchNormalization
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.regularizers import l2
-
-
+from tensorflow.keras.applications import Xception
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout, Conv2D, UpSampling2D, Reshape
+from tensorflow.python.client import device_lib
+import matplotlib.pyplot as plt
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.metrics import MeanIoU
 
 # Define constants
-input_shape = (256, 256, 3)  # Input shape for the model
-epochs = 5
-batch_size = 6
+input_shape = (224, 224, 3)  # Input shape for the model
+batch_size = 3
 
 # Data loading and preprocessing
 def load_data(data_dir):
@@ -29,23 +24,22 @@ def load_data(data_dir):
     for filename in os.listdir(data_dir):
         if filename.endswith(".png"):
             image_path = os.path.join(data_dir, filename)
-            mask_path = os.path.join(data_dir, filename.replace(".png", ".tif"))
+            mask_path = os.path.join(data_dir, filename.replace('.png', '.tif'))
 
             # Read and preprocess image
             image = cv2.imread(image_path)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            image = cv2.resize(image, (input_shape[0], input_shape[1])) / 255.0
+            image = cv2.resize(image, (input_shape[0], input_shape[1]))
 
             # Read and preprocess mask
             mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
             mask = cv2.resize(mask, (input_shape[0], input_shape[1]))
-            mask = (mask > 0).astype(np.uint8)  # Convert to binary mask
 
             images.append(image)
             masks.append(mask)
 
-    images = np.array(images)
-    masks = np.array(masks)
+    images = np.array(images) / 255.0
+    masks = np.array(masks) / 255.0
 
     # Split data into train, validation, and test sets
     X_train, X_val, y_train, y_val = train_test_split(images, masks, test_size=0.2, random_state=42)
@@ -54,117 +48,61 @@ def load_data(data_dir):
     return (X_train, y_train), (X_val, y_val), (X_test, y_test)
 
 # Model architecture
-def create_unet_model(input_shape):
-    # Define encoder
-    inputs = Input(input_shape)
+def create_segmentation_model(input_shape):
+    base_model = Xception(weights='imagenet', include_top=False, input_shape=input_shape)
+    for layer in base_model.layers:
+        layer.trainable = False
 
-    conv1 = Conv2D(64, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(inputs)
-    conv1 = BatchNormalization()(conv1)
-    conv1 = Dropout(0.2)(conv1)
+    x = base_model.output
+    x = GlobalAveragePooling2D()(x)
+    x = Dense(512, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    x = Dense(128, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    x = Dense(input_shape[0] * input_shape[1], activation='sigmoid')(x)
+    x = Reshape((input_shape[0], input_shape[1]))(x)
     
-    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+    model = Model(inputs=base_model.input, outputs=x)
     
-    conv2 = Conv2D(128, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(pool1)
-    conv2 = BatchNormalization()(conv2)
-    conv2 = Dropout(0.2)(conv2)
-    
-    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
-    
-    conv3 = Conv2D(256, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(pool2)
-    conv3 = BatchNormalization()(conv3)
-    conv3 = Dropout(0.2)(conv3)
-    
-    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
-    
-    conv4 = Conv2D(512, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(pool3)
-    conv4 = BatchNormalization()(conv4)
-    conv4 = Dropout(0.2)(conv4)
-    
-    pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
-    
-    conv5 = Conv2D(1024, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(pool4)
-    conv5 = BatchNormalization()(conv5)
-    conv5 = Dropout(0.2)(conv5)
-    
-    # Decoder
-    upconv6 = Conv2D(512, 2, activation='relu', padding='same')(UpSampling2D(size=(2, 2))(conv5))
-    merge6 = concatenate([conv4, upconv6], axis=3)
-    conv6 = Conv2D(512, 3, activation='relu', padding='same')(merge6)
-    upconv7 = Conv2D(256, 2, activation='relu', padding='same')(UpSampling2D(size=(2, 2))(conv6))
-    merge7 = concatenate([conv3, upconv7], axis=3)
-    conv7 = Conv2D(256, 3, activation='relu', padding='same')(merge7)
-    upconv8 = Conv2D(128, 2, activation='relu', padding='same')(UpSampling2D(size=(2, 2))(conv7))
-    merge8 = concatenate([conv2, upconv8], axis=3)
-    conv8 = Conv2D(128, 3, activation='relu', padding='same')(merge8)
-    upconv9 = Conv2D(64, 2, activation='relu', padding='same')(UpSampling2D(size=(2, 2))(conv8))
-    merge9 = concatenate([conv1, upconv9], axis=3)
-    
-    conv9 = Conv2D(64, 3, activation='relu', padding='same', kernel_regularizer=l2(0.001))(merge9)
-    conv9 = BatchNormalization()(conv9)
-    conv9 = Dropout(0.2)(conv9)
-    
-    # Output layer
-    outputs = Conv2D(1, 1, activation='sigmoid')(conv9)
-
-    model = Model(inputs=inputs, outputs=outputs)
     return model
 
+# Data augmentation
+def augment_data(train_data):
+    datagen = ImageDataGenerator(
+        rotation_range=40,
+        width_shift_range=0.3,
+        height_shift_range=0.3,
+        shear_range=0.3,
+        zoom_range=0.3,
+        horizontal_flip=True,
+        vertical_flip=True,
+        fill_mode='reflect'
+    )
+    datagen.fit(train_data[0])
+    return datagen
 
-def augment_data(X_train, y_train):
-    # Add a channels dimension to the data if it's missing
-    if X_train.ndim == 3:
-        X_train = np.expand_dims(X_train, axis=-1)
-    if y_train.ndim == 3:
-        y_train = np.expand_dims(y_train, axis=-1)
+# Train model with data augmentation
+def train_model_with_augmentation(model, train_data, val_data, datagen):
+    optimizer = Adam(learning_rate=0.001)
+    model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy', MeanIoU(num_classes=2)])
 
-    data_gen_args = dict(rotation_range=0.2,
-                         width_shift_range=0.05,
-                         height_shift_range=0.05,
-                         shear_range=0.05,
-                         zoom_range=0.05,
-                         horizontal_flip=True,
-                         fill_mode='nearest')
-    image_datagen = ImageDataGenerator(**data_gen_args)
-    mask_datagen = ImageDataGenerator(**data_gen_args)
-    image_datagen.fit(X_train, augment=True)
-    mask_datagen.fit(y_train, augment=True)
-    image_generator = image_datagen.flow(X_train, batch_size=batch_size, seed=1)
-    mask_generator = mask_datagen.flow(y_train, batch_size=batch_size, seed=1)
-    
-    train_generator = list(zip(image_generator, mask_generator))
-    return train_generator
+    checkpoint = ModelCheckpoint("./models/segmentation_model.keras", monitor='val_loss', save_best_only=True, verbose=1)
+    early_stopping = EarlyStopping(monitor='val_accuracy', patience=10, restore_best_weights=True)
 
+    history = model.fit(datagen.flow(train_data[0], train_data[1], batch_size=batch_size),
+                        validation_data=val_data,
+                        steps_per_epoch=len(train_data[0]) // batch_size,
+                        epochs=200,
+                        callbacks=[checkpoint, early_stopping])
+    return history
 
-# Training process
-def train_model(model, train_data, val_data):
-    # Compile the model
-    X_train, y_train = zip(*train_data)
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-
-    # Define callbacks
-    checkpoint = ModelCheckpoint("optic_disc_segmentation_model.keras", monitor='val_loss', save_best_only=True, verbose=1)
-    early_stopping = EarlyStopping(monitor='val_accuracy', patience=3, restore_best_weights=True)
-
-    # Train the model
-    history = model.fit(np.array(X_train), np.array(y_train), validation_data=val_data, epochs=epochs, batch_size=batch_size, callbacks=[checkpoint, early_stopping])
-
-    # Plot training history
-    plt.plot(history.history['loss'], label='Training Loss')
-    plt.plot(history.history['val_loss'], label='Validation Loss')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.show()
-
-# Evaluation process
+# Evaluate model
 def evaluate_model(model, test_data):
-    # Evaluate the model
-    loss, accuracy = model.evaluate(test_data[0], test_data[1])
-    return loss, accuracy
+    loss, accuracy, iou = model.evaluate(test_data[0], test_data[1])
+    return loss, accuracy, iou
 
-# Visualization functions
+# Visualize results
 def visualize_results(images, masks, predictions):
-    # Visualize sample results
     for i in range(5):
         plt.figure(figsize=(15, 5))
         plt.subplot(1, 3, 1)
@@ -183,40 +121,23 @@ def visualize_results(images, masks, predictions):
         plt.axis('off')
 
         plt.show()
-        
-
-def get_available_devices():
-    local_device_protos = device_lib.list_local_devices()
-    return [x.name for x in local_device_protos]
-
-
 
 # Main function
 def main():
-    # Define the directory containing the dataset
-    data_dir = "Dataset/ORIGA 200 Images/"
-
-    # Load data
+    data_dir = "Dataset/ProcessedImages/"
     train_data, val_data, test_data = load_data(data_dir)
 
-    # Augment data
-    train_generator = augment_data(*train_data)
+    model = create_segmentation_model(input_shape)
+    datagen = augment_data(train_data)
+    train_history = train_model_with_augmentation(model, train_data, val_data, datagen)
 
-    # Create and train U-Net model
-    model = create_unet_model(input_shape)
-    print(get_available_devices())
-    train_model(model, train_generator, val_data)
-
-    # Evaluate model
-    loss, accuracy = evaluate_model(model, test_data)
+    loss, accuracy, iou = evaluate_model(model, test_data)
     print("Test Loss:", loss)
     print("Test Accuracy:", accuracy)
+    print("Intersection over Union (IoU):", iou)
 
-    # Visualize results
     predictions = model.predict(test_data[0])
     visualize_results(test_data[0], test_data[1], predictions)
-    
-
 
 if __name__ == "__main__":
     main()
