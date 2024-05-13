@@ -8,14 +8,16 @@ from concurrent.futures import ThreadPoolExecutor
 #Create Images and Masks folder in ProcessedImages folder
 if not os.path.exists("Dataset/ProcessedImages/Images"):
     os.makedirs("Dataset/ProcessedImages/Images")
-if not os.path.exists("Dataset/ProcessedImages/Masks"):
-    os.makedirs("Dataset/ProcessedImages/Masks")
-
+if not os.path.exists("Dataset/ProcessedImages/DiscMasks"):
+    os.makedirs("Dataset/ProcessedImages/DiscMasks")
+if not os.path.exists("Dataset/ProcessedImages/CupMasks"):
+    os.makedirs("Dataset/ProcessedImages/CupMasks")
+    
 def load_image_and_annotation(filename):
     # Construct the paths to the image and annotation directories
     script_dir = os.path.dirname(os.path.realpath(__file__))
     parent_dir = os.path.dirname(script_dir)
-    data_dir = os.path.join(parent_dir, "Dataset", "ORIGA 200 Images")
+    data_dir = os.path.join(parent_dir, "Dataset", "ORIGA 100 Images")
     image_dir = data_dir
 
     image_path = os.path.join(image_dir, filename)
@@ -73,12 +75,19 @@ def enhance_image(image):
 
     return enhanced_image
 
-# Apply the function to your image
+
+def separate_and_save_cup(base_filename, labeled_image, output_dir):
+    # Create a new image where the cup pixels are preserved and all other pixels are set to black
+    cup_image = np.where(labeled_image == 255, 255, 0).astype(np.uint8)
+
+    # Save the cup image
+    cup_filename = f"{base_filename}-cup.tif"
+    cv2.imwrite(os.path.join(output_dir, cup_filename), cup_image)
 
 # Get the directory of the current script
 script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(script_dir)
-data_dir = os.path.join(parent_dir, "Dataset", "ORIGA 200 Images")
+data_dir = os.path.join(parent_dir, "Dataset", "ORIGA 100 Images")
 image_dir = data_dir
 
 # Load images and annotations in parallel
@@ -95,13 +104,20 @@ with ThreadPoolExecutor() as executor:
 
 # Save images and masks
 output_dir_images = os.path.join(parent_dir, "Dataset", "ProcessedImages", "Images")
-output_dir_masks = os.path.join(parent_dir, "Dataset", "ProcessedImages", "Masks")
+output_dir_disc_masks = os.path.join(parent_dir, "Dataset", "ProcessedImages", "DiscMasks")
+output_dir_cups_masks = os.path.join(parent_dir, "Dataset", "ProcessedImages", "CupMasks")
 os.makedirs(output_dir_images, exist_ok=True)
-os.makedirs(output_dir_masks, exist_ok=True)
+os.makedirs(output_dir_disc_masks, exist_ok=True)
+os.makedirs(output_dir_cups_masks, exist_ok=True)
+
+
+
 
 for i in range(0, len(cropped_images), 2):
     base_filename, unlabeled_image = cropped_images[i]
     highcontrast_image = enhance_image(unlabeled_image)
+    
     _, labeled_image = cropped_images[i+1]
     cv2.imwrite(os.path.join(output_dir_images, f"{base_filename}.png"), cv2.cvtColor(highcontrast_image, cv2.COLOR_RGB2BGR))
-    cv2.imwrite(os.path.join(output_dir_masks, f"{base_filename}.tif"), cv2.cvtColor(labeled_image, cv2.COLOR_RGB2BGR))
+    cv2.imwrite(os.path.join(output_dir_disc_masks, f"{base_filename}.tif"), cv2.cvtColor(labeled_image, cv2.COLOR_RGB2BGR))
+    separate_and_save_cup(base_filename, labeled_image, output_dir_cups_masks)
