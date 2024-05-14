@@ -19,6 +19,9 @@ If you are not on a Windows machine (like Linux or MacOS), run the following com
 ```cmd
 sh setup.sh
 ```
+
+# Setting up the environment
+
 ## Image Processing
 
 The `image_processing.py` script performs several tasks:
@@ -34,51 +37,44 @@ To run the script, navigate to the project root directory in your terminal and r
 ```cmd
 python src/image_processing.py
 ```
+4. **Run the Models:** Run the evaluation.py it will train the model and save the model in the models directory.
 
-### Evaluation of Machine Learning Models
-The code aims to perform semantic segmentation on retinal fundus images to detect the optic disc and optic cup.
+```cmd
+python src/evaluation.py
+```
+## After you have run the evaluation.py you would have made the models and then you can run the stream lit app to see the results.
 
-### Key Components
-1. **Data Preparation:**
-   - Reads image and mask paths from the specified directories.
-   - Splits the data into training and testing sets for both disc and cup models.
+```cmd
+streamlit run app.py
+```
 
-2. **Data Augmentation:**
-   - Utilizes Albumentations library for image augmentation.
-   - Randomly crops, flips, rotates, and scales the images for training.
+## Model Training and Evaluation
+The models are trained using the Adam optimizer with a learning rate scheduler. The loss function is Dice Loss for binary segmentation. The models are evaluated using precision, F1 score, and IoU score.
 
-3. **Model Architecture:**
-   - Utilizes the UNet architecture implemented in the segmentation_models_pytorch library.
-   - ResNet50 is used as the encoder, pre-trained on ImageNet.
-   - Separate models are defined for detecting the optic disc and optic cup.
+## Here are the accuracy metrics for the trained models:
 
-4. **Training:**
-   - Implements custom Dataset and DataLoader classes for loading and processing data.
-   - Defines loss function as Dice Loss for binary segmentation.
-   - Utilizes Adam optimizer with a learning rate scheduler for training both models.
-   - Trains each model for a specified number of epochs while saving checkpoints.
+### Disc Model Metrics:
 
-5. **Evaluation:**
-   - Computes precision, F1 score, and IoU score for both disc and cup models on the validation set.
-   - Visualizes training loss curves for monitoring model training.
-   - Displays sample predictions alongside ground truth images for qualitative evaluation.
+######  Precision: 0.9654836663623448
+###### F1 Score: 0.9666221319693521
+###### IoU Score: 0.9354004588964974
+###### Cup Model Metrics:
 
-### Dependencies
-- Python libraries: os, glob, pandas, numpy, matplotlib, cv2, torch, torchvision, albumentations, segmentation_models_pytorch, PIL, tqdm, sklearn.
+### Cup Model Metrics:
 
-### Usage
-- Ensure that the dataset is organized as specified in the code (images and masks in separate directories).
-- Adjust hyperparameters such as batch size, learning rate, and number of epochs as needed.
-- Run the code to train and evaluate the disc and cup segmentation models.
+###### Precision: 0.9052005632416757
+###### F1 Score: 0.8982977065530765
+###### IoU Score: 0.8153724576015451
+###### The training loss curves for the models can be seen in the image below:
 
-### Results
-- Model performance metrics (precision, F1 score, IoU score) are printed for both models.
-- Training loss curves are plotted to visualize model convergence.
-- Sample predictions are displayed alongside ground truth masks for qualitative assessment.
+![Training Loss Curves](pics/Training%20Loss%20Curves.png)
 
-### Output
-- The code generates visualizations, prints performance metrics, and saves model checkpoints for future use.
+Sample outputs of the model on training data can be seen in the images below:
 
-### Further Steps
-- Fine-tune hyperparameters or experiment with different architectures for potential performance improvements.
-- Utilize trained models for segmentation tasks in real-world applications.
+
+
+Sample outputs of the model on training data can be seen in the images below:
+
+![Training1](pics/Training1.png)
+
+![Training2](pics/Training2.png)

@@ -15,4 +15,4 @@ def print_image_values(image_path):
 
 
 
-print_image_values('Dataset/ProcessedImages/Masks/1.tif')
+print_image_values('Dataset/ProcessedImages/DiscMasks/1.tif')
